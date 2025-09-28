@@ -1,0 +1,267 @@
+name: Linux-Ludus-Bore-LLVM-BBR (Debian 13 container)
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Tag del Release a crear (vacío = auto)"
+        default: ""
+        required: false
+      modules_strategy:
+        description: "Estrategia de módulos: modprobed | diet | full"
+        default: "modprobed"
+        required: true
+      cpu_opt:
+        description: "Processor opt (p.e. znver3, x86-64-v3, tigerlake)"
+        default: "x86-64-v3"
+        required: true
+      kernel_version:
+        description: "Versión del kernel (p.e. v6.16.5 o 6.16-latest)"
+        default: "6.16-latest"
+        required: true
+      cpusched:
+        description: "Scheduler: bore | eevdf | pds | bmq | cfs"
+        default: "bore"
+        required: true
+      custom_cmdline:
+        description: "Kernel cmdline personalizado (vacío = default recomendado)"
+        default: ""
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:13
+
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      # ====== Valores base ======
+      _distro: "Debian"
+      _compiler: "llvm"
+      _llvm_ias: "1"
+      _lto_mode: "thin"
+      _tcp_cong_alg: "bbr"
+      _default_cpu_gov: "performance"
+      _rr_interval: "default"
+      _tickless: "2"
+      _timer_freq: "1000"
+      _acs_override: "false"
+      _logging_use_script: "no"
+      _install_after_building: "no"
+      _aggressive_ondemand: "false"
+      _menunconfig: "false"
+      _custom_commandline: ""   # se setea en runtime
+      # Por defecto, ambas desactivadas; se ajustarán según modules_strategy
+      _modprobeddb: "false"
+      _kernel_on_diet: "false"
+      _modprobeddb_db_path: "/root/.config/modprobed.db"
+
+    steps:
+      - name: Preparar apt y dependencias base
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git xz-utils \
+            build-essential fakeroot dpkg-dev \
+            bc bison flex libssl-dev libelf-dev dwarves \
+            clang lld llvm ccache libncurses-dev rsync \
+            pkg-config file
+          update-ca-certificates
+
+      - name: Instalar GitHub CLI (gh) para posibles reintentos de release
+        run: |
+          set -euo pipefail
+          if ! command -v gh >/dev/null 2>&1; then
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+              | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+            chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+              > /etc/apt/sources.list.d/github-cli.list
+            apt-get update
+            apt-get install -y gh
+          fi
+
+      - name: Checkout (este repo)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configurar versión, CPU, scheduler y localversion
+        id: cfg
+        shell: bash
+        run: |
+          echo "_version=${{ github.event.inputs.kernel_version }}" >> $GITHUB_ENV
+          echo "_processor_opt=${{ github.event.inputs.cpu_opt }}" >> $GITHUB_ENV
+          echo "_kernel_localversion=ludus-${{ github.event.inputs.cpu_opt }}" >> $GITHUB_ENV
+
+          SCHED="${{ github.event.inputs.cpusched }}"
+          case "$SCHED" in
+            bore|eevdf|pds|bmq|cfs)
+              echo "_cpusched=$SCHED" >> $GITHUB_ENV
+              ;;
+            *)
+              echo "::error::cpusched inválido: $SCHED (usa bore|eevdf|pds|bmq|cfs)"
+              exit 1
+              ;;
+          esac
+
+          # === CMDLINE desde input (fallback al default) ===
+          CMDLINE="${{ github.event.inputs.custom_cmdline }}"
+          if [ -z "$CMDLINE" ]; then
+            CMDLINE='quiet loglevel=3 systemd.show_status=auto udev.log_priority=3 nowatchdog nmi_watchdog=0 kernel.split_lock_mitigate=0 mitigations=off'
+          fi
+          echo "_custom_commandline=$CMDLINE" >> $GITHUB_ENV
+
+      - name: Configurar estrategia de módulos
+        id: modestrat
+        shell: bash
+        run: |
+          STRAT="${{ github.event.inputs.modules_strategy }}"
+          case "$STRAT" in
+            modprobed)
+              # Preferente: modprobed/<cpu_opt>/modprobed.db
+              # Fallback:   modprobed/generic/modprobed.db
+              CPU_DIR="modprobed/${{ github.event.inputs.cpu_opt }}"
+              CPU_DB="$CPU_DIR/modprobed.db"
+              GEN_DB="modprobed/generic/modprobed.db"
+
+              if [ -f "$CPU_DB" ]; then
+                SRC_DB="$CPU_DB"
+                echo "Usando modprobed específico: $CPU_DB"
+              elif [ -f "$GEN_DB" ]; then
+                SRC_DB="$GEN_DB"
+                echo "No existe modprobed para CPU '${{ github.event.inputs.cpu_opt }}'. Usando genérico: $GEN_DB"
+              else
+                echo "::error::modules_strategy=modprobed pero no existe ni $CPU_DB ni $GEN_DB en el repo"
+                exit 1
+              fi
+
+              mkdir -p /root/.config
+              cp "$SRC_DB" /root/.config/modprobed.db
+              chmod 600 /root/.config/modprobed.db
+              echo "_modprobeddb=true"      >> $GITHUB_ENV
+              echo "_kernel_on_diet=false"  >> $GITHUB_ENV
+              echo "mode=modprobed"         >> $GITHUB_OUTPUT
+              ;;
+            diet)
+              echo "_kernel_on_diet=true"   >> $GITHUB_ENV
+              echo "_modprobeddb=false"     >> $GITHUB_ENV
+              echo "mode=diet"              >> $GITHUB_OUTPUT
+              ;;
+            full)
+              echo "_kernel_on_diet=false"  >> $GITHUB_ENV
+              echo "_modprobeddb=false"     >> $GITHUB_ENV
+              echo "mode=full"              >> $GITHUB_OUTPUT
+              ;;
+            *)
+              echo "::error::modules_strategy inválida: $STRAT (usa modprobed | diet | full)"
+              exit 1
+              ;;
+          esac
+          echo "Estrategia de módulos: $STRAT"
+
+      - name: Mostrar configuración efectiva
+        run: |
+          echo "Kernel:         $_version"
+          echo "CPU opt:        $_processor_opt"
+          echo "Scheduler:       $_cpusched"
+          echo "Localversion:    $_kernel_localversion"
+          echo "Compiler:        $_compiler (LTO=$_lto_mode IAS=$_llvm_ias)"
+          echo "Gov:             $_default_cpu_gov"
+          echo "TCP:             $_tcp_cong_alg"
+          echo "Tickless:        $_tickless / HZ=$_timer_freq"
+          echo "Diet:            $_kernel_on_diet"
+          echo "modprobeddb:     $_modprobeddb (path $_modprobeddb_db_path)"
+          echo "menunconfig:     $_menunconfig"
+          echo "cmdline:         $_custom_commandline"
+
+      - name: Clonar
+        run: |
+          git clone https://github.com/Frogging-Family/linux-tkg
+          cd linux-tkg
+          git fetch --all --tags
+          git checkout master
+          
+      - name: Parchar install.sh
+        working-directory: linux-tkg
+        run: |
+          sed -i 's/_kernel_flavor="tkg-${_kernel_localversion}"/_kernel_flavor="${_kernel_localversion}"/' install.sh
+
+      - name: Compilar kernel (no interactivo)
+        working-directory: linux-tkg
+        shell: bash
+        run: |
+          chmod +x install.sh
+          set -e
+          ./install.sh install || {
+            echo "::warning::install.sh pidió interacción; reintentando con respuestas por defecto"
+            yes "" ./install.sh install
+          }
+
+      - name: Recolectar .deb
+        shell: bash
+        run: |
+          mkdir -p dist
+          # evita re-copiar desde dist
+          find . -type f -name "*.deb" -not -path "./dist/*" -exec cp -v {} dist/ \; || true
+          if [ -z "$(ls -A dist/*.deb 2>/dev/null)" ]; then
+            echo "No se encontraron .deb"; exit 1
+          fi
+          echo "Paquetes encontrados:"
+          ls -lh dist
+
+      - name: Extraer versión (para nombre de artifact)
+        id: meta
+        shell: bash
+        run: |
+          DEB="$(ls dist/*.deb | head -n1)"
+          VER="$(dpkg-deb -f "$DEB" Version || true)"
+          [ -z "$VER" ] && VER="unknown-${GITHUB_RUN_NUMBER}"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Subir artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ env._processor_opt }}-${{ steps.meta.outputs.version }}
+          path: dist/*.deb
+          if-no-files-found: error
+          retention-days: 7
+
+      # 1er intento: action oficial (puede fallar por carrera rara)
+      - name: Crear/actualizar Release único (agrega assets)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.release_tag || format('linux-ludus-{0}', github.event.inputs.kernel_version) }}
+          name: Linux-Ludus ${{ steps.meta.outputs.version }}
+          files: dist/*.deb
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      # Reintento robusto con gh: crea el release si no existe y sube assets
+      - name: Reintento de publicación con gh (si el paso anterior falló)
+        if: failure()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.release_tag || format('linux-ludus-{0}', github.event.inputs.kernel_version) }}"
+          TITLE="Linux-Ludus ${{ steps.meta.outputs.version }}"
+
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release '$TAG' no existe; creándolo…"
+            gh release create "$TAG" --title "$TITLE" --notes ""
+          else
+            echo "Release '$TAG' existe; actualizando…"
+          fi
+
+          echo "Subiendo assets (.deb)…"
+          gh release upload "$TAG" dist/*.deb --clobber
