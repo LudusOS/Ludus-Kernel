@@ -17,7 +17,7 @@ on:
         required: true
       kernel_version:
         description: "Versión del kernel (p.e. v6.16.5 o 6.16-latest)"
-        default: "6.16-latest"
+        default: "6.17-latest"
         required: true
       cpusched:
         description: "Scheduler: bore | eevdf | pds | bmq | cfs"
