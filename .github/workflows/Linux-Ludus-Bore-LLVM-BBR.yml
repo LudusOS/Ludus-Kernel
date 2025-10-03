@@ -191,6 +191,24 @@ jobs:
         run: |
           sed -i 's/_kernel_flavor="tkg-${_kernel_localversion}"/_kernel_flavor="${_kernel_localversion}"/' install.sh
 
+      - name: Forzar módulos .ko (sin compresión) solo en cpu_opt=x86-64
+        if: ${{ github.event.inputs.cpu_opt == 'x86-64' }}
+        working-directory: linux-tkg
+        shell: bash
+        run: |
+          cat > 99-no-zstd-modules.myfrag <<'EOF'
+          # 6.12+ : desactivar compresión de módulos
+          CONFIG_MODULE_COMPRESS=n
+          CONFIG_MODULE_COMPRESS_GZIP=n
+          CONFIG_MODULE_COMPRESS_XZ=n
+          CONFIG_MODULE_COMPRESS_ZSTD=n
+          # firma relajada (opcional; evita sorpresas)
+          CONFIG_MODULE_SIG=y
+          CONFIG_MODULE_SIG_ALL=n
+          # CONFIG_MODULE_SIG_FORCE is not set
+          EOF
+          echo "Fragmento creado: $(pwd)/99-no-zstd-modules.myfrag"
+
       - name: Compilar kernel (no interactivo)
         working-directory: linux-tkg
         shell: bash
