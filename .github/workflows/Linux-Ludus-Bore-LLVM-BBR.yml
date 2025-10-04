@@ -54,11 +54,11 @@ jobs:
       _install_after_building: "no"
       _aggressive_ondemand: "false"
       _menunconfig: "false"
-      _custom_commandline: ""   # se setea en runtime
-      # Por defecto, ambas desactivadas; se ajustarán según modules_strategy
+      _custom_commandline: ""
       _modprobeddb: "false"
       _kernel_on_diet: "false"
       _modprobeddb_db_path: "/root/.config/modprobed.db"
+      _config_fragments_no_confirm: "true"
 
     steps:
       - name: Preparar apt y dependencias base
