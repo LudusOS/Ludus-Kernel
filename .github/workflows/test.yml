@@ -59,6 +59,7 @@ jobs:
       _modprobeddb: "false"
       _kernel_on_diet: "false"
       _modprobeddb_db_path: "/root/.config/modprobed.db"
+      _config_fragments_no_confirm: "true"
 
     steps:
       - name: Preparar apt y dependencias base
