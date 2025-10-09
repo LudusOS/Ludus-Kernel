@@ -414,6 +414,7 @@ nls_utf8
 nouveau
 ntfs3
 ntsync
+ntsync
 nvidia_wmi_ec_backlight
 nvme
 nvme_auth
@@ -738,4 +739,3 @@ xt_tcpudp
 xxhash_generic
 zlib_deflate
 zram
-
