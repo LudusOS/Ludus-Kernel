@@ -61,6 +61,14 @@ jobs:
       _config_fragments_no_confirm: "true"
 
     steps:
+      - name: Free disk space on runner
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache
+          df -h
+
       - name: Preparar apt y dependencias base
         run: |
           apt-get update
@@ -71,6 +79,11 @@ jobs:
             clang lld llvm ccache libncurses-dev rsync \
             pkg-config file
           update-ca-certificates
+
+      - name: Clean apt cache
+        run: |
+          apt-get clean
+          rm -rf /var/lib/apt/lists/*
 
       - name: Instalar GitHub CLI (gh) para posibles reintentos de release
         run: |
