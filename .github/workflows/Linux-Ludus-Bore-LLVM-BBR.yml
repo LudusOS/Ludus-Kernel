@@ -61,14 +61,6 @@ jobs:
       _config_fragments_no_confirm: "true"
 
     steps:
-      - name: Free disk space on runner
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache
-          df -h
-
       - name: Preparar apt y dependencias base
         run: |
           apt-get update
