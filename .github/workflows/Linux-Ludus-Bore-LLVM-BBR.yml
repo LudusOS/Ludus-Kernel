@@ -55,7 +55,7 @@ jobs:
       _custom_commandline: ""
       _modprobeddb: "false"
       _kernel_on_diet: "false"
-      _modprobeddb_db_path: "${{ github.workspace }}/.config/modprobed.db"
+      _modprobeddb_db_path: "~/.config/modprobed.db"
       _config_fragments_no_confirm: "true"
       # ====== Variables para ahorrar espacio (igual que CI oficial de linux-tkg) ======
       _debugdisable: "true"
@@ -169,8 +169,11 @@ jobs:
               mkdir -p ~/.config
               cp "$SRC_DB" ~/.config/modprobed.db
               chmod 600 ~/.config/modprobed.db
+              echo "Archivo modprobed.db copiado a: $(realpath ~/.config/modprobed.db)"
+              ls -la ~/.config/modprobed.db
               echo "_modprobeddb=true"      >> $GITHUB_ENV
               echo "_kernel_on_diet=false"  >> $GITHUB_ENV
+              echo "_modprobeddb_db_path=$(realpath ~/.config/modprobed.db)" >> $GITHUB_ENV
               echo "mode=modprobed"         >> $GITHUB_OUTPUT
               ;;
             diet)
