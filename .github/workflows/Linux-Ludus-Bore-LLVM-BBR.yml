@@ -90,9 +90,8 @@ jobs:
           echo "Pruning Docker images..."
           docker system prune -af --volumes || true
           
-          echo "Cleaning apt cache..."
+          echo "Cleaning apt cache (keeping lists)..."
           sudo apt-get clean || true
-          sudo rm -rf /var/lib/apt/lists/* || true
           
           echo "::group::Disk space AFTER cleanup"
           df -h /
@@ -102,15 +101,15 @@ jobs:
       - name: Instalar dependencias de compilación
         run: |
           sudo apt-get update
+          # Dependencias básicas de compilación
           sudo apt-get install -y --no-install-recommends \
             ca-certificates curl git xz-utils \
-            build-essential fakeroot dpkg-dev \
+            build-essential fakeroot dpkg-dev debhelper \
             bc bison flex libssl-dev libelf-dev dwarves \
-            clang lld llvm libncurses-dev rsync \
-            pkg-config file zstd
-          # Limpiar cache de apt para recuperar espacio
-          sudo apt-get clean
-          sudo rm -rf /var/lib/apt/lists/*
+            clang lld llvm ccache libncurses-dev rsync \
+            pkg-config file zstd kmod cpio \
+            libdw-dev qtbase5-dev schedtool wget lz4
+          # NO limpiar apt cache aquí para que linux-tkg pueda instalar si necesita algo más
 
       - name: Checkout (este repo)
         uses: actions/checkout@v4
