@@ -1,4 +1,4 @@
-name: Linux-Ludus-Bore-LLVM-BBR (Debian 13 container)
+name: Linux-Ludus-Bore-LLVM-BBR
 
 on:
   workflow_dispatch:
@@ -34,12 +34,10 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      image: debian:13
 
     env:
       DEBIAN_FRONTEND: noninteractive
-      # ====== Valores base ======
+      # ====== Valores base para linux-tkg ======
       _distro: "Debian"
       _compiler: "llvm"
       _llvm_ias: "1"
@@ -57,7 +55,7 @@ jobs:
       _custom_commandline: ""
       _modprobeddb: "false"
       _kernel_on_diet: "false"
-      _modprobeddb_db_path: "/root/.config/modprobed.db"
+      _modprobeddb_db_path: "${{ github.workspace }}/.config/modprobed.db"
       _config_fragments_no_confirm: "true"
       # ====== Variables para ahorrar espacio (igual que CI oficial de linux-tkg) ======
       _debugdisable: "true"
@@ -65,34 +63,54 @@ jobs:
       _STRIP: "true"
 
     steps:
-      - name: Preparar apt y dependencias base
+      # ===== PASO 1: Liberar espacio en disco (CRÍTICO para kernel 6.18+) =====
+      - name: Liberar espacio en disco (~30GB)
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
+          echo "::group::Disk space BEFORE cleanup"
+          df -h /
+          echo "::endgroup::"
+          
+          echo "Removing unnecessary software..."
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          sudo rm -rf /opt/hostedtoolcache/go || true
+          sudo rm -rf /opt/hostedtoolcache/node || true
+          sudo rm -rf /usr/local/share/boost || true
+          sudo rm -rf /usr/share/swift || true
+          sudo rm -rf /usr/local/julia* || true
+          sudo rm -rf /usr/share/miniconda || true
+          sudo rm -rf /usr/local/share/powershell || true
+          sudo rm -rf /usr/local/share/chromium || true
+          sudo rm -rf /usr/local/lib/heroku || true
+          sudo rm -rf /opt/hostedtoolcache/Python || true
+          sudo rm -rf /opt/hostedtoolcache/Ruby || true
+          
+          echo "Pruning Docker images..."
+          docker system prune -af --volumes || true
+          
+          echo "Cleaning apt cache..."
+          sudo apt-get clean || true
+          sudo rm -rf /var/lib/apt/lists/* || true
+          
+          echo "::group::Disk space AFTER cleanup"
+          df -h /
+          echo "::endgroup::"
+
+      # ===== PASO 2: Instalar dependencias de compilación =====
+      - name: Instalar dependencias de compilación
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
             ca-certificates curl git xz-utils \
             build-essential fakeroot dpkg-dev \
             bc bison flex libssl-dev libelf-dev dwarves \
-            clang lld llvm ccache libncurses-dev rsync \
-            pkg-config file
-          update-ca-certificates
-
-      - name: Clean apt cache
-        run: |
-          apt-get clean
-          rm -rf /var/lib/apt/lists/*
-
-      - name: Instalar GitHub CLI (gh) para posibles reintentos de release
-        run: |
-          set -euo pipefail
-          if ! command -v gh >/dev/null 2>&1; then
-            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-              | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-            chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-              > /etc/apt/sources.list.d/github-cli.list
-            apt-get update
-            apt-get install -y gh
-          fi
+            clang lld llvm libncurses-dev rsync \
+            pkg-config file zstd
+          # Limpiar cache de apt para recuperar espacio
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
 
       - name: Checkout (este repo)
         uses: actions/checkout@v4
@@ -149,9 +167,9 @@ jobs:
                 exit 1
               fi
 
-              mkdir -p /root/.config
-              cp "$SRC_DB" /root/.config/modprobed.db
-              chmod 600 /root/.config/modprobed.db
+              mkdir -p ~/.config
+              cp "$SRC_DB" ~/.config/modprobed.db
+              chmod 600 ~/.config/modprobed.db
               echo "_modprobeddb=true"      >> $GITHUB_ENV
               echo "_kernel_on_diet=false"  >> $GITHUB_ENV
               echo "mode=modprobed"         >> $GITHUB_OUTPUT
@@ -187,13 +205,31 @@ jobs:
           echo "modprobeddb:     $_modprobeddb (path $_modprobeddb_db_path)"
           echo "menunconfig:     $_menunconfig"
           echo "cmdline:         $_custom_commandline"
+          echo "Disk space available:"
+          df -h /
 
-      - name: Clonar
+      - name: Clonar linux-tkg
         run: |
           git clone https://github.com/Frogging-Family/linux-tkg
           cd linux-tkg
           git fetch --all --tags
           git checkout master
+
+      - name: Deshabilitar paquete -dbg (ahorra ~3GB de espacio)
+        working-directory: linux-tkg
+        run: |
+          # Crear fragmento para deshabilitar DEBUG_INFO completamente
+          cat > 00-no-debug.myfrag <<'EOF'
+CONFIG_DEBUG_INFO=n
+CONFIG_DEBUG_INFO_NONE=y
+CONFIG_DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT=n
+CONFIG_DEBUG_INFO_DWARF4=n
+CONFIG_DEBUG_INFO_DWARF5=n
+CONFIG_DEBUG_INFO_BTF=n
+CONFIG_DEBUG_INFO_BTF_MODULES=n
+EOF
+          echo "Contenido del fragmento 00-no-debug.myfrag:"
+          cat 00-no-debug.myfrag
 
       - name: Parchar install.sh
         working-directory: linux-tkg
@@ -206,16 +242,16 @@ jobs:
         shell: bash
         run: |
           cat > 99-no-zstd-modules.myfrag <<'EOF'
-          # 6.12+ : desactivar compresión de módulos
-          CONFIG_MODULE_COMPRESS=n
-          CONFIG_MODULE_COMPRESS_GZIP=n
-          CONFIG_MODULE_COMPRESS_XZ=n
-          CONFIG_MODULE_COMPRESS_ZSTD=n
-          # firma relajada (opcional; evita sorpresas)
-          CONFIG_MODULE_SIG=y
-          CONFIG_MODULE_SIG_ALL=n
-          # CONFIG_MODULE_SIG_FORCE is not set
-          EOF
+# 6.12+ : desactivar compresión de módulos
+CONFIG_MODULE_COMPRESS=n
+CONFIG_MODULE_COMPRESS_GZIP=n
+CONFIG_MODULE_COMPRESS_XZ=n
+CONFIG_MODULE_COMPRESS_ZSTD=n
+# firma relajada (opcional; evita sorpresas)
+CONFIG_MODULE_SIG=y
+CONFIG_MODULE_SIG_ALL=n
+# CONFIG_MODULE_SIG_FORCE is not set
+EOF
           echo "Fragmento creado: $(pwd)/99-no-zstd-modules.myfrag"
 
       - name: Compilar kernel (no interactivo)
@@ -226,15 +262,22 @@ jobs:
           set -e
           ./install.sh install || {
             echo "::warning::install.sh pidió interacción; reintentando con respuestas por defecto"
-            yes "" ./install.sh install
+            yes "" | ./install.sh install
           }
 
       - name: Recolectar .deb
         shell: bash
         run: |
           mkdir -p dist
-          # evita re-copiar desde dist
-          find . -type f -name "*.deb" -not -path "./dist/*" -exec cp -v {} dist/ \; || true
+          # Buscar y copiar .deb, excluyendo los de debug y libc-dev
+          find . -type f -name "*.deb" -not -path "./dist/*" | while read deb; do
+            if [[ "$deb" != *"-dbg_"* ]] && [[ "$deb" != *"libc-dev"* ]]; then
+              cp -v "$deb" dist/
+            else
+              echo "Ignorando paquete de debug: $deb"
+            fi
+          done
+          
           if [ -z "$(ls -A dist/*.deb 2>/dev/null)" ]; then
             echo "No se encontraron .deb"; exit 1
           fi
