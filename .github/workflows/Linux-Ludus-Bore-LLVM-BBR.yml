@@ -32,44 +32,7 @@ permissions:
   contents: write
 
 jobs:
-  # ===== Liberar espacio en disco del host ANTES del contenedor =====
-  cleanup:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Free disk space on host
-        run: |
-          echo "::group::Disk space BEFORE cleanup"
-          df -h /
-          echo "::endgroup::"
-          
-          echo "Removing unnecessary software..."
-          sudo rm -rf /usr/share/dotnet || true
-          sudo rm -rf /usr/local/lib/android || true
-          sudo rm -rf /opt/ghc || true
-          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
-          sudo rm -rf /opt/hostedtoolcache/go || true
-          sudo rm -rf /opt/hostedtoolcache/node || true
-          sudo rm -rf /usr/local/share/boost || true
-          sudo rm -rf /usr/share/swift || true
-          sudo rm -rf /usr/local/julia* || true
-          sudo rm -rf /usr/share/miniconda || true
-          sudo rm -rf /usr/local/share/powershell || true
-          sudo rm -rf /usr/local/share/chromium || true
-          sudo rm -rf /usr/local/lib/heroku || true
-          
-          echo "Pruning Docker..."
-          docker system prune -af --volumes || true
-          
-          echo "Cleaning apt cache..."
-          sudo apt-get clean || true
-          sudo rm -rf /var/lib/apt/lists/* || true
-          
-          echo "::group::Disk space AFTER cleanup"
-          df -h /
-          echo "::endgroup::"
-
   build:
-    needs: cleanup
     runs-on: ubuntu-latest
     container:
       image: debian:13
@@ -96,6 +59,10 @@ jobs:
       _kernel_on_diet: "false"
       _modprobeddb_db_path: "/root/.config/modprobed.db"
       _config_fragments_no_confirm: "true"
+      # ====== Variables para ahorrar espacio (igual que CI oficial de linux-tkg) ======
+      _debugdisable: "true"
+      _noccache: "true"
+      _STRIP: "true"
 
     steps:
       - name: Preparar apt y dependencias base
@@ -227,7 +194,7 @@ jobs:
           cd linux-tkg
           git fetch --all --tags
           git checkout master
-          
+
       - name: Parchar install.sh
         working-directory: linux-tkg
         run: |
