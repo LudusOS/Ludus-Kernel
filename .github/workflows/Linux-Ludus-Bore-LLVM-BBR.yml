@@ -17,7 +17,7 @@ on:
         required: true
       kernel_version:
         description: "Versión del kernel (p.e. v6.16.5 o 6.16-latest)"
-        default: "6.17-latest"
+        default: "6.18-latest"
         required: true
       cpusched:
         description: "Scheduler: bore | eevdf | pds | bmq | cfs"
@@ -33,7 +33,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     env:
       DEBIAN_FRONTEND: noninteractive
@@ -106,10 +106,21 @@ jobs:
             ca-certificates curl git xz-utils \
             build-essential fakeroot dpkg-dev debhelper \
             bc bison flex libssl-dev libelf-dev dwarves \
-            clang lld llvm ccache libncurses-dev rsync \
+            clang-19 lld-19 llvm-19 ccache libncurses-dev rsync \
             pkg-config file zstd kmod cpio \
             libdw-dev qtbase5-dev schedtool wget lz4
-          # NO limpiar apt cache aquí para que linux-tkg pueda instalar si necesita algo más
+            
+      - name: Forzar LLVM 19 como toolchain por defecto
+        run: |
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-19 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-19 100
+          sudo update-alternatives --install /usr/bin/ld.lld ld.lld /usr/bin/ld.lld-19 100
+          sudo update-alternatives --install /usr/bin/llvm-ar llvm-ar /usr/bin/llvm-ar-19 100
+          sudo update-alternatives --install /usr/bin/llvm-nm llvm-nm /usr/bin/llvm-nm-19 100
+          sudo update-alternatives --install /usr/bin/llvm-objcopy llvm-objcopy /usr/bin/llvm-objcopy-19 100
+          sudo update-alternatives --install /usr/bin/llvm-strip llvm-strip /usr/bin/llvm-strip-19 100
+          sudo update-alternatives --install /usr/bin/llvm-ranlib llvm-ranlib /usr/bin/llvm-ranlib-19 100
+          sudo update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-19 100
 
       - name: Checkout (este repo)
         uses: actions/checkout@v4
@@ -209,6 +220,10 @@ jobs:
           echo "cmdline:         $_custom_commandline"
           echo "Disk space available:"
           df -h /
+          echo "=== LLVM toolchain en uso ==="
+          clang --version
+          ld.lld --version
+          llvm-ar --version
 
       - name: Clonar linux-tkg
         run: |
