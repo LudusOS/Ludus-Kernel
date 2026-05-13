@@ -98,6 +98,12 @@ jobs:
           echo "::endgroup::"
 
       # ===== PASO 2: Instalar dependencias de compilación =====
+      - name: Instalar LLVM 21 oficial
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 21
+    
       - name: Instalar dependencias de compilación
         run: |
           sudo apt-get update
@@ -106,11 +112,12 @@ jobs:
             ca-certificates curl git xz-utils \
             build-essential fakeroot dpkg-dev debhelper \
             bc bison flex libssl-dev libelf-dev dwarves \
-            clang-21 lld-21 llvm-21 ccache libncurses-dev rsync \
+            clang-21 lld-21 llvm-21 \
+            ccache libncurses-dev rsync \
             pkg-config file zstd kmod cpio \
             libdw-dev qtbase5-dev schedtool wget lz4
             
-      - name: Forzar LLVM 19 como toolchain por defecto
+      - name: Forzar LLVM 21 como toolchain por defecto
         run: |
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-21 100
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-21 100
